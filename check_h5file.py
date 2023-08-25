@@ -63,12 +63,15 @@ def main(folder, correct, wrong):
     # add index to the node coordinates
     indexed_correctNumberNodes = np.hstack((np.arange(len(correctNumberNodes), dtype=int).reshape(-1, 1), correctNumberNodes))
     indexed_wrongNumberNodes = np.hstack((np.arange(len(wrongNumberNodes), dtype=int).reshape(-1, 1), wrongNumberNodes))
+
     # sort the node coordinates based on the x, y, and z coordinates (here we assumme 3D mesh)
     # after sorting, the index is the mapping from the unsorted node numbering to the sorted node numbering
-    # sorted_correctNumberNodes = np.lexsort((correctNumberNodes[:, 1], correctNumberNodes[:, 2], correctNumberNodes[:, 3]))
-    sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2]))
-    # sorted_wrongNumberNodes = np.lexsort((wrongNumberNodes[:, 1], wrongNumberNodes[:, 2], wrongNumberNodes[:, 3]))
-    sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2]))
+    if  correctNumberNodes.shape[1] == 2:
+        sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2]))
+        sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2]))
+    elif correctNumberNodes.shape[1] == 3:
+        sorted_correctNumberNodes = np.lexsort((correctNumberNodes[:, 1], correctNumberNodes[:, 2], correctNumberNodes[:, 3]))
+        sorted_wrongNumberNodes = np.lexsort((wrongNumberNodes[:, 1], wrongNumberNodes[:, 2], wrongNumberNodes[:, 3]))
     
     # sort the node coordinates based on the index
     # First, extract the index from the sorted node coordinates
