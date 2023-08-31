@@ -6,10 +6,13 @@ import time
 
 """
 Author: Kei Yamamoto <keiya@simula.no>
-Last updated: 2023/05/19
+Last updated: 2023/08/31
 When restarting a simulation in turtleFSI, the visualization files are not always correct due to different mesh partitioning.
 This scripts fixes the visualization files by checking mesh in h5 files and swapping the node numbering, tpoology, and vector values.
 After running this script, you can use the combine_xdmf.py script to merge the visualization files.
+TODO: 1. reanme wrong / correct to run / run_1
+      2. add support for more than 2 runs
+      3. remove --correct and --wrong arguments and find the correct and wrong files automatically
 """
 
 def parse_args():
@@ -66,6 +69,7 @@ def main(folder, correct, wrong):
 
     # sort the node coordinates based on the x, y, and z coordinates (here we assumme 3D mesh)
     # after sorting, the index is the mapping from the unsorted node numbering to the sorted node numbering
+    # TODO: Add check if x coordinate is unique, if not sort based on the combination of x, y, and z coordinates 
     if  correctNumberNodes.shape[1] == 2:
         sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2]))
         sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2]))
@@ -94,7 +98,7 @@ def main(folder, correct, wrong):
     
     ordered_map_index_wrongNumberNodes = np.argsort(map_index_wrongNumberNodes)
 
-    # # Also sort the tpoology in the h5 file
+    # Also sort the tpoology in the h5 file
     # this loop replaces the node numbers in the topology array one by one
     wrongNumberTopology = wrongNumberViz['Mesh/0/mesh/topology'][:]
 
