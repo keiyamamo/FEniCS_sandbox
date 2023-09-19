@@ -1,109 +1,229 @@
 import gmsh
-import sys
-gmsh.initialize()
+import dolfinx
+import dolfinx_mpc
+from dolfinx.fem import FunctionSpace, Function, Constant
+from dolfinx.io import XDMFFile
+from dolfinx.mesh import locate_entities_boundary, meshtags
+from dolfinx.io.gmshio import model_to_mesh
 
-# The next step is to create the rectangular channel of the benchmark. In GMSH, there are two kernels for geometry computations; the `built_in` kernel ( `gmsh.model.geo`), and the [OpenCascade](https://www.opencascade.com/) kernel (`gmsh.model.opencascade`). In this tutorial, we will use the the `occ` kernel, as it is better suited. Other demos of the usage of the gmsh python API can be found in their [GitLab repository](https://gitlab.onelab.info/gmsh/gmsh/-/tree/master/tutorial/python).
-
-gmsh.model.add("DFG 3D")
-L, B, H, r = 2.5, 0.41, 0.41, 0.05
-channel = gmsh.model.occ.addBox(0, 0, 0, L, B, H)
-
-# The next step is to create the cylinder, which is done in the following way
-
-cylinder = gmsh.model.occ.addCylinder(1.2, 0.1, 0.2, 0, 0.2, 0, r)
-
-# where the first three arguments describes the (x,y,z) coordinate of the center of the first circular face. The next three arguments describes the axis of height of the cylinder, in this case, it is (0,0.41,0). The final parameter is the radius of the cylinder.
-# We have now created two geometrical objects, that each can be meshed with GMSH. However, we are only interested in the fluid volume in the channel, which whould be the channel excluding the sphere. We use the GMSH command `BooleanDifference` for this
-
-fluid = gmsh.model.occ.fragment([(3, channel)], [(3, cylinder)])
-
-# where the first argument `[(3, channel)]`is a list of tuples, where the first argument is the geometrical dimension of the entity (Point=0, Line=1, Surface=2, Volume=3). and channel is a unique integer identifying the channel. Similarly, the second argument is the list of tuples of entities we would like to exclude from 
-# the newly created fluid volume.
-# The next step is to tag physical entities, such as the fluid volume, and inlets, outlets, channel walls and obstacle walls.
-# We start by finding the volumes, which after the `cut`-operation is only the fluid volume. We could have kept the other volumes by supply keyword arguments to the  `cut`operation. See the [GMSH Python API](https://gitlab.onelab.info/gmsh/gmsh/-/blob/master/api/gmsh.py#L5143) for more information. We also need to syncronize the CAD module before tagging entities.
-
-gmsh.model.occ.synchronize()
-volumes = gmsh.model.getEntities(dim=3)
-assert(volumes == fluid[0])
-fluid_marker = 11
-gmsh.model.addPhysicalGroup(volumes[0][0], [volumes[0][1]], fluid_marker)
-gmsh.model.setPhysicalName(volumes[0][0], fluid_marker, "Fluid volume")
-
-# For the surfaces, we start by finding all surfaces, and then compute the geometrical center such that we can indentify which are inlets, outlets, walls and the obstacle. As the walls will consist of multiple surfaces, and the obstacle is circular, we need to find all entites before addin the physical group.
-
+from ufl import grad, dot, lhs, rhs, Measure, TrialFunction, TestFunction, FiniteElement
+import ufl
+from petsc4py import PETSc
 import numpy as np
+from mpi4py import MPI
 
-surfaces = gmsh.model.occ.getEntities(dim=2)
-inlet_marker, outlet_marker, wall_marker, obstacle_marker = 1, 3, 5, 7
-walls = []
-obstacles = []
-for surface in surfaces:
-    com = gmsh.model.occ.getCenterOfMass(surface[0], surface[1])
-    if np.allclose(com, [0, B/2, H/2]):
-        gmsh.model.addPhysicalGroup(surface[0], [surface[1]], inlet_marker)
-        inlet = surface[1]
-        gmsh.model.setPhysicalName(surface[0], inlet_marker, "Fluid inlet")
-    elif np.allclose(com, [L, B/2, H/2]):
-        gmsh.model.addPhysicalGroup(surface[0], [surface[1]], outlet_marker)
-        gmsh.model.setPhysicalName(surface[0], outlet_marker, "Fluid outlet")
-    elif np.isclose(com[2], 0) or np.isclose(com[1], B) or np.isclose(com[2], H) or np.isclose(com[1],0):
-        walls.append(surface[1])
-    else:
-        obstacles.append(surface[1])
-gmsh.model.addPhysicalGroup(2, walls, wall_marker)
-gmsh.model.setPhysicalName(2, wall_marker, "Walls")
-gmsh.model.addPhysicalGroup(2, obstacles, obstacle_marker)
-gmsh.model.setPhysicalName(2, obstacle_marker, "Obstacle")
+# MPI initialization
+comm = MPI.COMM_WORLD
+rank = MPI.COMM_WORLD.rank
 
-# The final step is to set mesh resolutions. We will use `GMSH Fields` to do this. One can alternatively set mesh resolutions at points with the command `gmsh.model.occ.mesh.setSize`. We start by specifying a distance field from the obstacle surface
+##################################################
+## Mesh generation Start
+##################################################
+gmsh.initialize()
+r = 0.1     # radius of sphere
+L = 1.0     # length of box
 
-distance = gmsh.model.mesh.field.add("Distance")
-gmsh.model.mesh.field.setNumbers(distance, "FacesList", obstacles)
+gdim = 3         # Geometric dimension of the mesh
+fdim = gdim - 1  # facet dimension
 
-# The next step is to use a threshold function vary the resolution from these surfaces in the following way:
-# ```
-# LcMax -                  /--------
-#                      /
-# LcMin -o---------/
-#        |         |       |
-#       Point    DistMin DistMax
-# ```
+if rank == 0:
+    # Define geometry for RVE
+    sphere = gmsh.model.occ.add_sphere(L/2, L/2, L/2, r)
+    box = gmsh.model.occ.add_box(0.0, 0.0, 0.0, L, L, L)
+    whole_domain = gmsh.model.occ.fragment([(3, box)], [(3, sphere)])
+    gmsh.model.occ.synchronize()
 
-resolution = r/10
-threshold = gmsh.model.mesh.field.add("Threshold")
-gmsh.model.mesh.field.setNumber(threshold, "IField", distance)
-gmsh.model.mesh.field.setNumber(threshold, "LcMin", resolution)
-gmsh.model.mesh.field.setNumber(threshold, "LcMax", 20*resolution)
-gmsh.model.mesh.field.setNumber(threshold, "DistMin", 0.5*r)
-gmsh.model.mesh.field.setNumber(threshold, "DistMax", r)
+    matrix_physical = gmsh.model.addPhysicalGroup(gdim, [box], tag=1)         # tag for matrix
+    inclusion_physical = gmsh.model.addPhysicalGroup(gdim, [sphere], tag=2)      # tag for inclusion
 
+    # Get the interface elements between rectangle and circle and tag
+    interface_elements = gmsh.model.getBoundary([(gdim, inclusion_physical)])
+    interface_physical = gmsh.model.addPhysicalGroup(fdim, (1, 1), tag = 9)
 
-# We add a similar threshold at the inlet to ensure fully resolved inlet flow
+    background_surfaces = []
+    inclusion_surfaces = []
+    for domain in whole_domain[0]:
+        com = gmsh.model.occ.getCenterOfMass(domain[0], domain[1])
+        mass = gmsh.model.occ.getMass(domain[0], domain[1])
+        if np.isclose(mass, 4/3 * np.pi * (r ** 3)):  # identify inclusion by its mass
+            inclusion_surfaces.append(domain)
+        else:
+            background_surfaces.append(domain)
 
-inlet_dist = gmsh.model.mesh.field.add("Distance")
-gmsh.model.mesh.field.setNumbers(inlet_dist, "FacesList", [inlet])
-inlet_thre = gmsh.model.mesh.field.add("Threshold")
-gmsh.model.mesh.field.setNumber(inlet_thre, "IField", inlet_dist)
-gmsh.model.mesh.field.setNumber(inlet_thre, "LcMin", 5*resolution)
-gmsh.model.mesh.field.setNumber(inlet_thre, "LcMax", 10*resolution)
-gmsh.model.mesh.field.setNumber(inlet_thre, "DistMin", 0.1)
-gmsh.model.mesh.field.setNumber(inlet_thre, "DistMax", 0.5)
+    gmsh.model.mesh.field.add("Distance", 1)
+    edges = gmsh.model.getBoundary(inclusion_surfaces, oriented=False)
+    gmsh.model.mesh.field.setNumbers(1, "CurvesList", [e[0] for e in edges])
+    gmsh.model.mesh.field.setNumber(1, "Sampling", 300)
 
-# We combine these fields by using the minimum field
+    gmsh.model.mesh.field.add("Threshold", 2)
+    gmsh.model.mesh.field.setNumber(2, "IField", 1)
+    gmsh.model.mesh.field.setNumber(2, "LcMin", 0.010)
+    gmsh.model.mesh.field.setNumber(2, "LcMax", 0.030)
+    gmsh.model.mesh.field.setNumber(2, "DistMin", 0.00)
+    gmsh.model.mesh.field.setNumber(2, "DistMax", 0.075)
+    gmsh.model.mesh.field.setAsBackgroundMesh(2)
 
-minimum = gmsh.model.mesh.field.add("Min")
-gmsh.model.mesh.field.setNumbers(minimum, "FieldsList", [threshold, inlet_thre])
-gmsh.model.mesh.field.setAsBackgroundMesh(minimum)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.model.mesh.generate(gdim)
 
-# Before meshing the model, we need to use the syncronize command
+domain, ct, _ = model_to_mesh(gmsh.model, comm, rank, gdim=gdim)
+gmsh.finalize()
 
-gmsh.model.occ.synchronize()
-gmsh.model.mesh.generate(3)
+dx = Measure('dx', domain=domain, subdomain_data=ct)
+x = ufl.SpatialCoordinate(domain)
+##################################################
+## Mesh generation finished
+##################################################
 
-# We can write the mesh to msh to be visualized with gmsh with the following command
+# elements and funcionspace
+###########################
 
-# gmsh.write("mesh3D.msh")
+P1 = FiniteElement("CG", domain.ufl_cell(), 1)
+V = FunctionSpace(domain, P1)
 
-# Show the mesh
-if '-nopopup' not in sys.argv:
-    gmsh.fltk.run()
+# define function, trial function and test function
+T_fluc = TrialFunction(V)
+dT_fluc = TestFunction(V)
+
+# define material parameter
+S = FunctionSpace(domain, ("DG", 0))
+kappa = Function(S)
+matrix = ct.find(1)
+kappa.x.array[matrix] = np.full_like(matrix, 5, dtype=PETSc.ScalarType)
+inclusion = ct.find(2)
+kappa.x.array[inclusion]  = np.full_like(inclusion, 1, dtype=PETSc.ScalarType)
+kappa.x.scatter_forward()
+
+# boundary conditions
+#####################
+bcs = []
+## periodic boundary conditions
+pbc_directions = []
+pbc_slave_tags = []
+pbc_is_slave = []
+pbc_is_master = []
+pbc_meshtags = []
+pbc_slave_to_master_maps = []
+
+mpc = dolfinx_mpc.MultiPointConstraint(V)
+
+def generate_pbc_slave_to_master_map(i):
+    def pbc_slave_to_master_map(x):
+        out_x = x.copy()
+        out_x[i] = x[i] - L
+        return out_x
+
+    return pbc_slave_to_master_map
+
+def generate_pbc_is_slave(i):
+    return lambda x: np.isclose(x[i], L)
+
+def generate_pbc_is_master(i):
+    return lambda x: np.isclose(x[i], 0.0)
+
+for i in range(gdim):
+
+    pbc_directions.append(i)
+    pbc_slave_tags.append(i + 3)
+    pbc_is_slave.append(generate_pbc_is_slave(i))
+    pbc_is_master.append(generate_pbc_is_master(i))
+    pbc_slave_to_master_maps.append(generate_pbc_slave_to_master_map(i))
+
+    facets = locate_entities_boundary(domain, fdim, pbc_is_slave[-1])
+    arg_sort = np.argsort(facets)
+    pbc_meshtags.append(meshtags(domain,
+                                 fdim,
+                                 facets[arg_sort],
+                                 np.full(len(facets), pbc_slave_tags[-1], dtype=np.int32)))
+
+N_pbc = len(pbc_directions)
+for i in range(N_pbc):
+
+    # slave/master mapping of opposite surfaces (without slave-slave[-slave] intersections)
+    def pbc_slave_to_master_map(x):
+        out_x = pbc_slave_to_master_maps[i](x)
+        # remove edges that are connected to another slave surface
+        idx = np.logical_or(pbc_is_slave[(i + 1) % N_pbc](x),pbc_is_slave[(i + 2) % N_pbc](x))
+        out_x[pbc_directions[i]][idx] = np.nan
+        return out_x
+
+    mpc.create_periodic_constraint_topological(V, pbc_meshtags[i],
+                                                   pbc_slave_tags[i],
+                                                   pbc_slave_to_master_map,
+                                                   bcs)
+
+if len(pbc_directions) > 1:
+    def pbc_slave_to_master_map_corner(x):
+        '''
+        Maps the slave corner dof [intersection of slave_x, slave_y, slave_z] (1,1,1) to
+        master corner dof [master_x, master_y, master_z] (0,0,0)
+        '''
+        out_x = x.copy()
+        out_x[0] = x[0] - L
+        out_x[1] = x[1] - L
+        out_x[2] = x[2] - L
+        idx_corner = np.logical_and(pbc_is_slave[0](x), np.logical_and(pbc_is_slave[1](x), pbc_is_slave[2](x)))
+        out_x[0][~idx_corner] = np.nan
+        out_x[1][~idx_corner] = np.nan
+        out_x[2][~idx_corner] = np.nan
+        return out_x
+
+    def generate_pbc_slave_to_master_map_edges(dir_i, dir_j):
+        def pbc_slave_to_master_map_edges(x):
+            '''
+            Maps the slave edge dofs [intersection of slave_i, slave_j] (i=1,j=1) to
+            master corner dof [master_i, master_j] (i=0,j=0)
+            (1) map slave_x, slave_y to master_x, master_y: i=0, j=1
+            (2) map slave_x, slave_z to master_x, master_z: i=0, j=2
+            (3) map slave_y, slave_z to master_y, master_z: i=1, j=2
+            '''
+            out_x = x.copy()
+            out_x[dir_i] = x[dir_i] - L
+            out_x[dir_j] = x[dir_j] - L
+            idx = np.logical_and(pbc_is_slave[dir_i](x), pbc_is_slave[dir_j](x))
+            out_x[dir_i][~idx] = np.nan
+            out_x[dir_j][~idx] = np.nan
+            idx_corner = np.logical_and(pbc_is_slave[0](x), np.logical_and(pbc_is_slave[1](x), pbc_is_slave[2](x)))
+            out_x[dir_i][idx_corner] = np.nan
+            out_x[dir_j][idx_corner] = np.nan
+            print(len(out_x[dir_i][idx]))
+            return out_x
+        return pbc_slave_to_master_map_edges
+
+    mapping_slave_intersections = [(0,1),(0,2),(1,2)] # pairs of slave intersections
+
+    for ij in range(gdim):
+        # mapping slave intersection node (corner) to master intersection node (opposite corner)
+        mpc.create_periodic_constraint_topological(V, pbc_meshtags[0],
+                                                   pbc_slave_tags[0],
+                                                   pbc_slave_to_master_map_corner,
+                                                   bcs)
+
+        for inters in mapping_slave_intersections:
+            # mapping slave intersections to opposite master intersections
+            mpc.create_periodic_constraint_topological(V, pbc_meshtags[inters[0]],
+                                                       pbc_slave_tags[inters[0]],
+                                                       generate_pbc_slave_to_master_map_edges(inters[0], inters[1]),
+                                                       bcs)
+
+mpc.finalize()
+
+# Variational problem
+#####################
+T_gradient = Constant(domain, PETSc.ScalarType((1,0,0)))
+
+## weak formulation
+eqn = - kappa * dot(grad(dot(T_gradient , x) + T_fluc), grad(dT_fluc)) * dx
+a_form = lhs(eqn)
+L_form = rhs(eqn)
+
+## solving
+func_sol = Function(V)
+problem = dolfinx_mpc.LinearProblem(a_form, L_form, mpc, bcs=bcs)
+func_sol = problem.solve()
+
+# write results to file
+file_results1 = XDMFFile(domain.comm, "results_3D_MWE/T_fluc.xdmf", "w")
+file_results1.write_mesh(domain)
+file_results1.write_function(func_sol)
+file_results1.close()
