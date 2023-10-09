@@ -1,0 +1,4 @@
+*.vtu
+*.xdmf
+*.xml.gz
+.DS_Store
