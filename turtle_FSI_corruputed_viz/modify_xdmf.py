@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 
 
 # Parse the XDMF file
-tree = ET.parse('velocity.xdmf')
+tree = ET.parse('displacement.xdmf')
 trees = tree.findall(".//{*}include")
 root = tree.getroot()
 
@@ -23,4 +23,4 @@ for i in range(fix_start_index, len(trees)):
 
 
 # Save the modified XML back to a file
-tree.write('fixed_velocity.xdmf')
+tree.write('fixed_displacement.xdmf', encoding='utf-8', xml_declaration=True)
