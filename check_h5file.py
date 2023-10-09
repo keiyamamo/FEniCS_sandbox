@@ -2,7 +2,6 @@ import os
 import h5py
 import numpy as np
 from argparse import ArgumentParser
-import time
 
 """
 Author: Kei Yamamoto <keiya@simula.no>
@@ -45,6 +44,8 @@ def main(folder, correct, wrong):
     wrongNumberNodes = wrongNumberViz['Mesh/0/mesh/geometry'][:]
     correctNumberNodes = correctNumberViz['Mesh/0/mesh/geometry'][:]
 
+    assert wrongNumberNodes.size == correctNumberNodes.size, 'The number of nodes in the mesh is not the same'
+
     # Here, we simply copy toplogy from the correct file to the wrong file if they are not the same
     if (correctNumberViz['Mesh/0/mesh/topology'][:] != wrongNumberViz['Mesh/0/mesh/topology'][:]).all():
         print('Topology is not the same')
@@ -69,13 +70,19 @@ def main(folder, correct, wrong):
 
     # sort the node coordinates based on the x, y, and z coordinates (here we assumme 3D mesh)
     # after sorting, the index is the mapping from the unsorted node numbering to the sorted node numbering
-    # TODO: Add check if x coordinate is unique, if not sort based on the combination of x, y, and z coordinates 
-    if  correctNumberNodes.shape[1] == 2:
-        sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2]))
-        sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2]))
-    elif correctNumberNodes.shape[1] == 3:
-        sorted_correctNumberNodes = np.lexsort((correctNumberNodes[:, 1], correctNumberNodes[:, 2], correctNumberNodes[:, 3]))
-        sorted_wrongNumberNodes = np.lexsort((wrongNumberNodes[:, 1], wrongNumberNodes[:, 2], wrongNumberNodes[:, 3]))
+    # TODO: Add check if x coordinate is unique, if not sort based on the combination of x, y, and z coordinates
+    if indexed_correctNumberNodes[:,1].size == np.unique(indexed_correctNumberNodes[:, 1]).size:
+        print('x coordinate is unique and sort based on x coordinate only')
+        sorted_correctNumberNodes = np.argsort(indexed_correctNumberNodes[:, 0])
+        sorted_wrongNumberNodes = np.argsort(indexed_wrongNumberNodes[:, 0])
+    else:
+        print('x coordinate is not unique and sort based on x, y, and z coordinates')
+        if  correctNumberNodes.shape[1] == 2:
+            sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2]))
+            sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2]))
+        elif correctNumberNodes.shape[1] == 3:
+            sorted_correctNumberNodes = np.lexsort((indexed_correctNumberNodes[:, 1], indexed_correctNumberNodes[:, 2], indexed_correctNumberNodes[:, 3]))
+            sorted_wrongNumberNodes = np.lexsort((indexed_wrongNumberNodes[:, 1], indexed_wrongNumberNodes[:, 2], indexed_wrongNumberNodes[:, 3]))
     
     # sort the node coordinates based on the index
     # First, extract the index from the sorted node coordinates
@@ -91,20 +98,21 @@ def main(folder, correct, wrong):
 
     # Also sort the vectors in the h5 file
     for i in range(len(wrongNumberViz["VisualisationVector"].keys())):
-        wrongNumberViz["VisualisationVector"][str(i)][...] = np.array(wrongNumberViz["VisualisationVector"][str(i)])[map_index_wrongNumberNodes]
+        velocity_vector = wrongNumberViz["VisualisationVector"][str(i)][:, :]
+        ordered_velocity_vector = velocity_vector[map_index_wrongNumberNodes]
+        wrongNumberViz["VisualisationVector"][str(i)][...] = ordered_velocity_vector
     
     for i in range(len(correctNumberViz["VisualisationVector"].keys())):
-        correctNumberViz["VisualisationVector"][str(i)][...] = np.array(correctNumberViz["VisualisationVector"][str(i)])[map_index_correctNumberNodes]
+        velocity_vector = correctNumberViz["VisualisationVector"][str(i)][:, :]
+        ordered_velocity_vector = velocity_vector[map_index_correctNumberNodes]
+        correctNumberViz["VisualisationVector"][str(i)][...] = ordered_velocity_vector
     
     ordered_map_index_wrongNumberNodes = np.argsort(map_index_wrongNumberNodes)
 
     # Also sort the tpoology in the h5 file
     # this loop replaces the node numbers in the topology array one by one
     wrongNumberTopology = wrongNumberViz['Mesh/0/mesh/topology'][:]
-
-    for row in range(wrongNumberTopology.shape[0]):
-        for column in range(wrongNumberTopology.shape[1]):
-            wrongNumberTopology[row,column] = np.rint(ordered_map_index_wrongNumberNodes[wrongNumberTopology[row,column]])
+    wrongNumberTopology = np.rint(ordered_map_index_wrongNumberNodes[wrongNumberTopology, 1])
 
     wrongNumberViz['Mesh/0/mesh/topology'][...] = wrongNumberTopology
     correctNumberViz['Mesh/0/mesh/topology'][...] = wrongNumberTopology
