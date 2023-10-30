@@ -51,15 +51,15 @@ def main(folder, correct, wrong):
         else:
             print('Topology is the same')
 
-        # Check if the node numbering is correct
-        if (correctNumberNodes == wrongNumberNodes).all():
-            print('Node numbering is correct')
-            print('...exiting')
-            wrongNumberViz.close()
-            correctNumberViz.close()
-            exit()
-        else:
-            print('Node numbering is incorrect')
+        # # Check if the node numbering is correct
+        # if (correctNumberNodes == wrongNumberNodes).all():
+        #     print('Node numbering is correct')
+        #     print('...exiting')
+        #     wrongNumberViz.close()
+        #     correctNumberViz.close()
+        #     exit()
+        # else:
+        #     print('Node numbering is incorrect')
         
         # add index to the node coordinates
         indexed_correctNumberNodes = np.hstack((np.arange(len(correctNumberNodes), dtype=int).reshape(-1, 1), correctNumberNodes))
@@ -100,14 +100,14 @@ def main(folder, correct, wrong):
 
         # Also sort the vectors in the h5 file
         print("Sorting the vectors in the h5 file")
-        # Also sort the vectors in the h5 file
+        # Also sort the vectors in the h5 file        
         for i in range(len(wrongNumberViz["VisualisationVector"].keys())):
             if i % 100 == 0:
                 print(f"Sorting the vector {i} out of {len(wrongNumberViz['VisualisationVector'].keys())}")
             velocity_vector = wrongNumberViz["VisualisationVector"][str(i)][:, :]
             ordered_velocity_vector = velocity_vector[map_index_wrongNumberNodes]
             wrongNumberViz["VisualisationVector"][str(i)][...] = ordered_velocity_vector
-        
+    
         for i in range(len(correctNumberViz["VisualisationVector"].keys())):
             if i % 100 == 0:
                 print(f"Sorting the vector {i} out of {len(correctNumberViz['VisualisationVector'].keys())}")
@@ -122,8 +122,7 @@ def main(folder, correct, wrong):
         # this loop replaces the node numbers in the topology array one by one
         print("Sorting the topology in the h5 file")
         wrongNumberTopology = wrongNumberViz['Mesh/0/mesh/topology'][:]
-        wrongNumberTopology = np.rint(ordered_map_index_wrongNumberNodes[wrongNumberTopology])
-
+        wrongNumberTopology = np.rint(ordered_map_index_wrongNumberNodes[wrongNumberTopology]).astype(int)
         wrongNumberViz['Mesh/0/mesh/topology'][...] = wrongNumberTopology
         correctNumberViz['Mesh/0/mesh/topology'][...] = wrongNumberTopology
 

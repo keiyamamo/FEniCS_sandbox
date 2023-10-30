@@ -2,3 +2,8 @@
 *.xdmf
 *.xml.gz
 .DS_Store
+*.yml
+*.h5
+.DS_Store
+*.pvd
+*.pickle
