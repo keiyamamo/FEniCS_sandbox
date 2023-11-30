@@ -3,10 +3,13 @@ from dolfin import *
 import numpy as np
 mesh = UnitCubeMesh(10, 10, 5)
 marker = MeshFunction("size_t", mesh, mesh.topology().dim()-1, 0)
-for f in facets(mesh):
-    marker[f] = (np.isclose(f.midpoint().x(), 0) or np.isclose(f.midpoint().x(), 1) or
-                 np.isclose(f.midpoint().y(), 0) or np.isclose(f.midpoint().y(), 1))
-submesh = create_meshview(marker, 1)
+# for f in facets(mesh):
+#     marker[f] = (np.isclose(f.midpoint().x(), 0) or np.isclose(f.midpoint().x(), 1) or
+#                  np.isclose(f.midpoint().y(), 0) or np.isclose(f.midpoint().y(), 1))
+# submesh = create_meshview(marker, 1)
+
+submesh = BoundaryMesh(mesh, "exterior")
+from IPython import embed; embed(); exit(1)
 
 expr = Expression("x[0] + x[1]", degree=1)
 V1 = FunctionSpace(mesh, "DG", 1)
