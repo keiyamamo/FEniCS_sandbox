@@ -14,6 +14,7 @@ def local_project(f, V):
     u = Function(V)
     # solver.solve_local_rhs(u)
     solve(A, u.vector(), b)
+    # from IPython import embed; embed(); exit(1)
     return u
 
 
@@ -50,14 +51,21 @@ velocity_degree = 2
 mesh = UnitCubeMesh(10, 10, 10)
 
 V = VectorFunctionSpace(mesh, "CG", velocity_degree)
-f = Expression(("sin(x[0]*pi)", "cos(x[1]*pi)", "x[2]"), degree=velocity_degree)
+f = Expression(("10*x[0]*x[0]+sin(x[0])", "cos(x[1])", "x[2]"), degree=velocity_degree)
 u_2 = interpolate(f, V)
+volume_writer = XDMFFile("u2.xdmf")
+volume_writer.write_checkpoint(u_2, "u", 0, XDMFFile.Encoding.HDF5, False)
+volume_writer.close()
 
-File("u_2.pvd") << u_2
 
 stress = STRESS(u_2, 1, mesh, velocity_degree)
 volume_tau, surface_tau = stress()
 
-File("surface_tau.pvd") << surface_tau
-File("volume_tau.pvd") << volume_tau
+
+volume_writer = XDMFFile("volume_tau.xdmf")
+volume_writer.write_checkpoint(volume_tau, "tau", 0, XDMFFile.Encoding.HDF5, False)
+volume_writer.close()
+surface_tau_writer = XDMFFile("surface_tau.xdmf")
+surface_tau_writer.write_checkpoint(surface_tau, "tau", 0, XDMFFile.Encoding.HDF5, False)
+surface_tau_writer.close()
 
